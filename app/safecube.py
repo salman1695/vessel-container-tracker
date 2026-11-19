@@ -13,6 +13,25 @@ def detect_shipment_type(number: str) -> str:
     return "BL"
 
 
+def _classify_event_stage(description: str, event_type: str) -> str:
+    desc = (description or "").upper()
+    if "GATE IN" in desc:
+        return "GATE IN"
+    if "GATE OUT" in desc:
+        return "GATE OUT"
+    if "EMPTY" in desc and "PICK" in desc:
+        return "EMPTY PICKUP"
+    if "LOAD" in desc:
+        return "LOADED ON VESSEL"
+    if "DISCHARG" in desc:
+        return "DISCHARGED"
+    if "DEPART" in desc or "SAIL" in desc:
+        return "VESSEL DEPARTURE"
+    if "ARRIV" in desc or "POD" in desc or "POL" in desc:
+        return "PORT CALL"
+    return event_type or "MILESTONE"
+
+
 def fetch_and_parse_shipment(shipment_number: str, sealine: Optional[str] = None) -> dict:
     if not SINAY_API_KEY:
         raise HTTPException(status_code=500, detail="API Key missing in .env file.")
@@ -84,7 +103,7 @@ def fetch_and_parse_shipment(shipment_number: str, sealine: Optional[str] = None
             voyage = ev.get("voyage")
             if voyage:
                 latest_voyage = voyage
-
+            
             parsed_ev = {
                 "description": ev.get("description"),
                 "event_code": ev.get("eventCode"),
@@ -96,6 +115,8 @@ def fetch_and_parse_shipment(shipment_number: str, sealine: Optional[str] = None
                 "is_actual": ev.get("isActual"),
                 "vessel": ves.get("name"),
                 "voyage": voyage,
+                "stage": _classify_event_stage(ev.get("description") or "", ev_type),
+                "completion_status": "COMPLETED" if ev.get("isActual") else "PENDING",
             }
 
             all_milestones.append(parsed_ev)

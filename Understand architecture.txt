@@ -1,0 +1,40 @@
+Backend (app/)
+app/main.py: App setup, routes wiring.
+
+app/carriers.py: Carrier to SCAC mapper.
+
+app/safecube.py: Safecube API & parser.
+
+app/db/connection.py: SQLite DB & schema.
+
+app/db/shipments_repo.py: Cache, history & delete.
+
+app/db/audit_repo.py: Logs & severity levels.
+
+app/db/__init__.py: DB module exports.
+
+app/services/fleet_sync.py: Manual sync & errors.
+
+app/services/__init__.py: Service module exports.
+
+app/routes/tracking.py: Track & vessel APIs.
+
+app/routes/history.py: History & delete APIs.
+
+app/routes/logs.py: Audit logs & sync APIs.
+
+app/routes/__init__.py: Route module exports.
+
+Frontend (frontend/)
+frontend/index.html: Multi-view HTML layout.
+
+frontend/app.js: UI logic & API calls.
+
+frontend/map.js: Leaflet sea map.
+
+frontend/styles.css: Custom UI styling.
+
+Config
+.gitignore: Ignored files list.
+
+.env: Local API secrets.

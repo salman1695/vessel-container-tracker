@@ -116,3 +116,14 @@ def search_by_vessel_name(vessel_name: str):
     rows = cursor.fetchall()
     conn.close()
     return [json.loads(r["clean_data"]) for r in rows]
+
+def delete_shipment_from_db(container_number: str) -> bool:
+    """Database se shipment record delete karta hai taake agli search LIVE API se aaye."""
+    clean_num = container_number.strip().upper()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM shipments WHERE container_number = ?", (clean_num,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted

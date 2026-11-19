@@ -5,6 +5,7 @@ from app.db.shipments_repo import (
     get_tracking_history,
     get_stale_active_shipments,
     search_by_vessel_name,
+    delete_shipment_from_db,
 )
 from app.db.audit_repo import add_log, get_recent_logs
 
@@ -17,6 +18,7 @@ __all__ = [
     "get_tracking_history",
     "get_stale_active_shipments",
     "search_by_vessel_name",
+    "delete_shipment_from_db",
     "add_log",
     "get_recent_logs",
 ]

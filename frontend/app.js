@@ -175,6 +175,7 @@ function renderContainerData(data) {
     : data.milestones;
 
   renderMilestonesList('timelineContainer', containerEvents, 'No container equipment events recorded.');
+  renderUnifiedMilestones('timelineContainer', 'containerProgressBox', data.milestones, 'No shipment milestones recorded.');
 
   renderSeaMap({
     seaRoutePath: data.sea_route_path,
@@ -213,7 +214,7 @@ async function handleVesselSearch(e) {
     document.getElementById('vResCount').textContent = data.total_containers_tracked || 0;
 
     renderMilestonesList('vesselTimelineContainer', data.vessel_milestones, 'No vessel voyage events recorded.');
-
+    renderUnifiedMilestones('vesselTimelineContainer', 'vesselProgressBox', data.vessel_milestones, 'No vessel voyage events recorded.');
     const list = document.getElementById('vContainersList');
     list.innerHTML = '';
     (data.containers || []).forEach(c => {
@@ -355,4 +356,126 @@ async function triggerFleetSync() {
     btn.disabled = false;
     btn.textContent = '🔄 Sync Fleet';
   }
+}
+function quickTrackContainer(containerNum, forceLive = false) {
+  switchPage('tracking');
+  switchSearchMode('container');
+  document.getElementById('shipmentInput').value = containerNum;
+  handleContainerSearch(null, forceLive);
+}
+function renderHistoryTable() {
+  const tbody = document.getElementById('historyTableBody');
+  if (!tbody) return;
+
+  const q = (document.getElementById('historyFilterInput')?.value || '').trim().toLowerCase();
+  const filtered = allHistoryCache.filter(item =>
+    !q ||
+    (item.container_number || '').toLowerCase().includes(q) ||
+    (item.vessel_name || '').toLowerCase().includes(q) ||
+    (item.shipping_line || '').toLowerCase().includes(q)
+  );
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-xs text-slate-400">No matching shipments found.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(item => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50/80">
+      <td class="py-3 px-3 font-mono text-xs font-bold text-sky-700">${item.container_number}</td>
+      <td class="py-3 px-3 text-xs font-semibold text-slate-800">${item.vessel_name || '-'}</td>
+      <td class="py-3 px-3 text-xs text-slate-600">${item.shipping_line || '-'}</td>
+      <td class="py-3 px-3">
+        <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">${(item.status || 'UNKNOWN').replace('_', ' ')}</span>
+      </td>
+      <td class="py-3 px-3 font-mono text-[11px] text-slate-500">${formatDate(item.updated_at)}</td>
+      <td class="py-3 px-3 text-right space-x-3 whitespace-nowrap">
+        <button type="button" onclick="quickTrackContainer('${item.container_number}', true)"
+          class="text-xs font-bold text-sky-600 hover:underline cursor-pointer">Open Live →</button>
+        <button type="button" onclick="deleteHistoryItem('${item.container_number}')"
+          class="text-xs font-bold text-rose-600 hover:underline cursor-pointer">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function deleteHistoryItem(containerNum) {
+  try {
+    const res = await fetch(`/api/v1/history/${encodeURIComponent(containerNum)}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Delete failed');
+    await loadHistoryData();
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
+function renderUnifiedMilestones(containerId, summaryId, events, emptyMessage) {
+  const container = document.getElementById(containerId);
+  const summaryEl = summaryId ? document.getElementById(summaryId) : null;
+  container.innerHTML = '';
+
+  const list = Array.isArray(events) ? events : [];
+  const total = list.length;
+  const completedCount = list.filter(m => Boolean(m.is_actual)).length;
+  const remainingCount = Math.max(total - completedCount, 0);
+  const pct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+
+  if (summaryEl) {
+    summaryEl.innerHTML = total > 0
+      ? `
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4">
+          <div class="flex items-center justify-between text-xs font-bold mb-1.5">
+            <span class="text-slate-800">Completed: <span class="text-emerald-600">${completedCount}</span> • Remaining: <span class="text-amber-600">${remainingCount}</span></span>
+            <span class="font-mono text-sky-700">${completedCount}/${total} (${pct}%)</span>
+          </div>
+          <div class="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div class="h-full bg-emerald-500 transition-all duration-300" style="width: ${pct}%"></div>
+          </div>
+        </div>
+      `
+      : '';
+  }
+
+  if (total === 0) {
+    container.innerHTML = `<p class="text-xs text-slate-400 pl-4">${emptyMessage}</p>`;
+    return;
+  }
+
+  list.forEach(m => {
+    const isDone = Boolean(m.is_actual);
+    const dotColor = isDone
+      ? 'bg-emerald-500 border-white ring-2 ring-emerald-200'
+      : 'bg-amber-400 border-white ring-2 ring-amber-100';
+
+    const statusTag = isDone
+      ? '<span class="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">Completed</span>'
+      : '<span class="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">Pending</span>';
+
+    const stageTag = m.stage
+      ? `<span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600">${m.stage}</span>`
+      : '';
+
+    const extraInfo = [
+      m.location ? `${m.location}${m.country ? ', ' + m.country : ''}` : null,
+      m.facility ? `🏢 ${m.facility}` : null,
+      m.voyage ? `Voyage: ${m.voyage}` : null
+    ].filter(Boolean).join(' • ');
+
+    container.innerHTML += `
+      <div class="pl-5 relative">
+        <span class="w-3.5 h-3.5 rounded-full ${dotColor} border-2 absolute -left-[8px] top-1"></span>
+        <div class="flex items-start justify-between gap-2 flex-wrap">
+          <div class="flex items-center gap-2 flex-wrap">
+            <p class="text-sm font-bold text-slate-900">${m.description || 'Event'}</p>
+            ${stageTag}
+          </div>
+          ${statusTag}
+        </div>
+        <p class="text-xs text-slate-600 mt-0.5">${extraInfo}</p>
+        <p class="text-[11px] font-mono text-slate-400 mt-1">${formatDate(m.date)}</p>
+      </div>
+    `;
+  });
 }
