@@ -1,4 +1,5 @@
-// File 3: frontend/app.js (API Calls, Separate Container/Vessel Milestones, History & Logs
+let allHistoryCache = [];
+let currentSeverityFilter = '';
 
 function formatDate(dateStr) {
   if (!dateStr) return 'Pending';
@@ -13,13 +14,28 @@ function formatDate(dateStr) {
   });
 }
 
-function quickFill(val) {
-  switchTab('container');
-  document.getElementById('shipmentInput').value = val;
-  handleContainerSearch(null, false);
+function switchPage(pageName) {
+  ['tracking', 'history', 'logs'].forEach(p => {
+    const sec = document.getElementById(`page-${p}`);
+    const navBtn = document.getElementById(`nav${p.charAt(0).toUpperCase() + p.slice(1)}`);
+    if (sec) sec.classList.toggle('hidden', p !== pageName);
+    if (navBtn) {
+      navBtn.className = p === pageName
+        ? 'px-3.5 py-2 rounded-lg text-xs font-bold bg-white text-sky-700 shadow-xs transition cursor-pointer'
+        : 'px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition cursor-pointer';
+    }
+  });
+
+  document.getElementById('errorBox').classList.add('hidden');
+
+  if (pageName === 'history') loadHistoryData();
+  if (pageName === 'logs') loadAuditLogs();
+  if (pageName === 'tracking' && typeof map !== 'undefined' && map) {
+    setTimeout(() => map.invalidateSize(), 120);
+  }
 }
 
-function switchTab(mode) {
+function switchSearchMode(mode) {
   const isContainer = mode === 'container';
   document.getElementById('containerForm').classList.toggle('hidden', !isContainer);
   document.getElementById('vesselForm').classList.toggle('hidden', isContainer);
@@ -31,6 +47,13 @@ function switchTab(mode) {
   document.getElementById('tabVessel').className = !isContainer
     ? 'px-4 py-2 rounded-lg text-sm font-bold bg-white text-sky-700 shadow-xs transition cursor-pointer'
     : 'px-4 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:text-slate-900 transition cursor-pointer';
+}
+
+function quickTrackContainer(containerNum) {
+  switchPage('tracking');
+  switchSearchMode('container');
+  document.getElementById('shipmentInput').value = containerNum;
+  handleContainerSearch(null, false);
 }
 
 function renderMilestonesList(containerId, events, emptyMessage) {
@@ -55,9 +78,7 @@ function renderMilestonesList(containerId, events, emptyMessage) {
       m.location ? `${m.location}${m.country ? ', ' + m.country : ''}` : null,
       m.facility ? `🏢 ${m.facility}` : null,
       m.voyage ? `Voyage: ${m.voyage}` : null
-    ]
-      .filter(Boolean)
-      .join(' • ');
+    ].filter(Boolean).join(' • ');
 
     container.innerHTML += `
       <div class="pl-5 relative">
@@ -98,12 +119,10 @@ async function handleContainerSearch(e, forceRefresh = false) {
 
     renderContainerData(data);
     resultsSection.classList.remove('hidden');
-    loadHistoryAndLogs();
   } catch (err) {
     errorBox.textContent = `⚠️ ${err.message}`;
     errorBox.classList.remove('hidden');
     resultsSection.classList.add('hidden');
-    loadHistoryAndLogs();
   } finally {
     loader.classList.add('hidden');
   }
@@ -115,7 +134,6 @@ function renderContainerData(data) {
   badge.textContent = `⚡ ${data.source || 'LIVE'}`;
   badge.classList.remove('hidden');
 
-  // Dynamic progress bar based on status
   const statusUpper = (s.status || '').toUpperCase();
   const progressBar = document.getElementById('routeProgressFill');
   if (progressBar) {
@@ -124,17 +142,15 @@ function renderContainerData(data) {
     else progressBar.style.width = '20%';
   }
 
-  // Banner
   document.getElementById('bannerOrigin').textContent = s.origin_port || 'Origin Port';
   document.getElementById('bannerDest').textContent = s.destination_port || 'Destination Port';
   document.getElementById('bannerCarrier').textContent = `Carrier: ${s.shipping_line || 'Auto-Detected'}`;
   document.getElementById('bannerVessel').textContent = s.vessel_name
-    ? `Onboard: ${s.vessel_name} ${s.voyage ? '(Voyage ' + s.voyage + ')' : ''}`
+    ? `Vessel: ${s.vessel_name} ${s.voyage ? '• Voy ' + s.voyage : ''}`
     : 'Vessel Pending';
   document.getElementById('bannerEta').textContent = `ETA: ${formatDate(s.eta)}`;
   document.getElementById('resStatusBadge').textContent = (s.status || 'UNKNOWN').replace('_', ' ');
 
-  // KPI Cards
   document.getElementById('resContainer').textContent = s.container_number || '-';
   document.getElementById('resSize').textContent = s.container_size || 'Standard Container';
 
@@ -154,19 +170,12 @@ function renderContainerData(data) {
   document.getElementById('resEta').textContent = formatDate(s.eta);
   document.getElementById('resType').textContent = `${data.detected_type || 'CT'} • Synced: ${formatDate(data.last_synced_at)}`;
 
-  // Container-specific Equipment Milestones (falls back to all milestones if equipment list empty)
-  const containerEvents =
-    data.container_milestones && data.container_milestones.length > 0
-      ? data.container_milestones
-      : data.milestones;
+  const containerEvents = (data.container_milestones && data.container_milestones.length > 0)
+    ? data.container_milestones
+    : data.milestones;
 
-  renderMilestonesList(
-    'timelineContainer',
-    containerEvents,
-    'No container equipment events recorded yet.'
-  );
+  renderMilestonesList('timelineContainer', containerEvents, 'No container equipment events recorded.');
 
-  // Render Sea Map
   renderSeaMap({
     seaRoutePath: data.sea_route_path,
     coords: coords,
@@ -203,88 +212,96 @@ async function handleVesselSearch(e) {
     document.getElementById('vResMmsi').textContent = data.vessel_mmsi || '-';
     document.getElementById('vResCount').textContent = data.total_containers_tracked || 0;
 
-    // Vessel-only Voyage Milestones (TRANSPORT events)
-    renderMilestonesList(
-      'vesselTimelineContainer',
-      data.vessel_milestones,
-      'No vessel voyage events available.'
-    );
+    renderMilestonesList('vesselTimelineContainer', data.vessel_milestones, 'No vessel voyage events recorded.');
 
-    // Containers onboard this vessel
     const list = document.getElementById('vContainersList');
     list.innerHTML = '';
     (data.containers || []).forEach(c => {
       list.innerHTML += `
-        <div onclick="loadContainerFromVessel('${c.container_number}')"
+        <div onclick="quickTrackContainer('${c.container_number}')"
           class="cursor-pointer bg-slate-50 hover:bg-sky-50 border border-slate-200 hover:border-sky-300 rounded-xl p-4 flex items-center justify-between transition">
           <div>
             <div class="font-mono font-bold text-sky-700">${c.container_number}</div>
             <div class="text-xs text-slate-600 mt-0.5">${c.origin_port || '?'} → ${c.destination_port || '?'} (${c.shipping_line || ''})</div>
           </div>
-          <span class="text-xs font-bold px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700">Container View →</span>
+          <span class="text-xs font-bold px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700">Inspect →</span>
         </div>
       `;
     });
 
     vesselResultsSection.classList.remove('hidden');
-    loadHistoryAndLogs();
   } catch (err) {
     errorBox.textContent = `⚠️ ${err.message}`;
     errorBox.classList.remove('hidden');
     vesselResultsSection.classList.add('hidden');
-    loadHistoryAndLogs();
   } finally {
     loader.classList.add('hidden');
   }
 }
 
-function loadContainerFromVessel(containerNum) {
-  switchTab('container');
-  document.getElementById('shipmentInput').value = containerNum;
-  handleContainerSearch(null, false);
-}
-
-async function loadHistoryAndLogs() {
+async function loadHistoryData() {
   try {
-    const [histRes, logsRes] = await Promise.all([
-      fetch('/api/v1/history?limit=10'),
-      fetch('/api/v1/logs?limit=25')
-    ]);
-
-    if (histRes.ok) {
-      const histData = await histRes.json();
-      renderHistoryBar(histData.history || []);
-    }
-
-    if (logsRes.ok) {
-      const logsData = await logsRes.json();
-      renderLogsTable(logsData.logs || []);
-    }
+    const res = await fetch('/api/v1/history?limit=50');
+    if (!res.ok) return;
+    const data = await res.json();
+    allHistoryCache = data.history || [];
+    renderHistoryTable();
   } catch (err) {
-    console.error('Failed to load history/logs:', err);
+    console.error('History fetch error:', err);
   }
 }
 
-function renderHistoryBar(history) {
-  const bar = document.getElementById('recentHistoryBar');
-  if (!bar) return;
+function renderHistoryTable() {
+  const tbody = document.getElementById('historyTableBody');
+  if (!tbody) return;
 
-  if (history.length === 0) {
-    bar.innerHTML = '<span class="text-xs text-slate-400">No shipments tracked yet.</span>';
+  const q = (document.getElementById('historyFilterInput')?.value || '').trim().toLowerCase();
+  const filtered = allHistoryCache.filter(item =>
+    !q ||
+    (item.container_number || '').toLowerCase().includes(q) ||
+    (item.vessel_name || '').toLowerCase().includes(q) ||
+    (item.shipping_line || '').toLowerCase().includes(q)
+  );
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-xs text-slate-400">No matching shipments found.</td></tr>';
     return;
   }
 
-  bar.innerHTML = history
-    .map(
-      item => `
-      <button type="button" onclick="quickFill('${item.container_number}')"
-        class="inline-flex items-center gap-2 text-xs bg-slate-100 hover:bg-sky-50 text-slate-700 hover:text-sky-700 border border-slate-200 hover:border-sky-300 px-3 py-1.5 rounded-lg transition cursor-pointer">
-        <span class="font-mono font-bold">${item.container_number}</span>
-        ${item.vessel_name ? `<span class="text-slate-400">• 🚢 ${item.vessel_name}</span>` : ''}
-      </button>
-    `
-    )
-    .join('');
+  tbody.innerHTML = filtered.map(item => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50/80">
+      <td class="py-3 px-3 font-mono text-xs font-bold text-sky-700">${item.container_number}</td>
+      <td class="py-3 px-3 text-xs font-semibold text-slate-800">${item.vessel_name || '-'}</td>
+      <td class="py-3 px-3 text-xs text-slate-600">${item.shipping_line || '-'}</td>
+      <td class="py-3 px-3">
+        <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">${(item.status || 'UNKNOWN').replace('_', ' ')}</span>
+      </td>
+      <td class="py-3 px-3 font-mono text-[11px] text-slate-500">${formatDate(item.updated_at)}</td>
+      <td class="py-3 px-3 text-right">
+        <button type="button" onclick="quickTrackContainer('${item.container_number}')"
+          class="text-xs font-bold text-sky-600 hover:underline cursor-pointer">Open →</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterLogsBySeverity(sev) {
+  currentSeverityFilter = sev;
+  loadAuditLogs();
+}
+
+async function loadAuditLogs() {
+  try {
+    const params = new URLSearchParams({ limit: 100 });
+    if (currentSeverityFilter) params.append('severity', currentSeverityFilter);
+
+    const res = await fetch(`/api/v1/logs?${params.toString()}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderLogsTable(data.logs || []);
+  } catch (err) {
+    console.error('Audit logs fetch error:', err);
+  }
 }
 
 function renderLogsTable(logs) {
@@ -292,39 +309,34 @@ function renderLogsTable(logs) {
   if (!tbody) return;
 
   if (logs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-slate-400 text-xs">No logs recorded yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-xs text-slate-400">No audit logs found for this filter.</td></tr>';
     return;
   }
 
-  tbody.innerHTML = logs
-    .map(log => {
-      const sourceBadge =
-        log.source === 'LIVE_API'
-          ? 'bg-sky-50 text-sky-700 border-sky-200'
-          : log.source === 'CACHE'
-          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-          : 'bg-slate-100 text-slate-600 border-slate-200';
+  const sevStyles = {
+    SUCCESS: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    WARNING: 'bg-amber-50 text-amber-700 border-amber-200',
+    ERROR: 'bg-rose-50 text-rose-700 border-rose-200',
+    INFO: 'bg-sky-50 text-sky-700 border-sky-200'
+  };
 
-      return `
-        <tr class="border-b border-slate-100 hover:bg-slate-50/70">
-          <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500">${formatDate(log.timestamp)}</td>
-          <td class="py-2.5 px-3 text-xs font-bold text-slate-800">${log.action_type}</td>
-          <td class="py-2.5 px-3 font-mono text-xs font-semibold text-sky-700">${log.query_target}</td>
-          <td class="py-2.5 px-3"><span class="text-[10px] font-bold px-2 py-0.5 rounded border ${sourceBadge}">${log.source}</span></td>
-          <td class="py-2.5 px-3 text-xs text-slate-600">${log.details}</td>
-        </tr>
-      `;
-    })
-    .join('');
-}
+  tbody.innerHTML = logs.map(log => {
+    const sev = (log.severity || 'INFO').toUpperCase();
+    const badgeClass = sevStyles[sev] || sevStyles.INFO;
 
-function toggleLogsDrawer() {
-  const drawer = document.getElementById('logsDrawer');
-  drawer.classList.toggle('hidden');
-  if (!drawer.classList.contains('hidden')) {
-    loadHistoryAndLogs();
-    drawer.scrollIntoView({ behavior: 'smooth' });
-  }
+    return `
+      <tr class="border-b border-slate-100 hover:bg-slate-50/70">
+        <td class="py-2.5 px-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">${formatDate(log.timestamp)}</td>
+        <td class="py-2.5 px-3 whitespace-nowrap">
+          <span class="text-[10px] font-extrabold px-2 py-0.5 rounded border ${badgeClass}">${sev}</span>
+        </td>
+        <td class="py-2.5 px-3 text-xs font-bold text-slate-800 whitespace-nowrap">${log.action_type}</td>
+        <td class="py-2.5 px-3 font-mono text-xs font-semibold text-sky-700 whitespace-nowrap">${log.query_target}</td>
+        <td class="py-2.5 px-3 text-xs font-medium text-slate-600 whitespace-nowrap">${log.source}</td>
+        <td class="py-2.5 px-3 text-xs text-slate-700">${log.details}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 async function triggerFleetSync() {
@@ -334,15 +346,13 @@ async function triggerFleetSync() {
   try {
     const res = await fetch('/api/v1/sync-active', { method: 'POST' });
     const data = await res.json();
-    alert(`Fleet Sync Complete! Checked: ${data.checked_stale}, Updated: ${data.synced}`);
-    loadHistoryAndLogs();
+    alert(`Fleet Sync Complete! Checked: ${data.checked_stale}, Updated: ${data.synced}, Failed: ${data.failed}`);
+    if (!document.getElementById('page-logs').classList.contains('hidden')) loadAuditLogs();
+    if (!document.getElementById('page-history').classList.contains('hidden')) loadHistoryData();
   } catch (err) {
     alert('Sync failed: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔄 Sync Active Fleet';
+    btn.textContent = '🔄 Sync Fleet';
   }
 }
-
-// Load history & logs automatically when page opens
-window.addEventListener('DOMContentLoaded', loadHistoryAndLogs);

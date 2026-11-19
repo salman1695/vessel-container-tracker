@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import CACHE_TTL_HOURS
-from app.database import (
+from app.db import (
     init_db,
     get_cached_shipment,
     save_shipment_to_db,
@@ -21,7 +21,7 @@ from app.safecube import fetch_and_parse_shipment
 app = FastAPI(
     title="Vessel & Container Tracker API",
     description="Modular Microservice for Container & Live Vessel Tracking with Audit Logs & Auto-Sync",
-    version="2.1.0"
+    version="2.2.0"
 )
 
 app.add_middleware(
@@ -39,6 +39,24 @@ if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 
+def _extract_clean_error(exc: Exception) -> str:
+    """Long URLs ya raw tracebacks ke bajaye clean readable error message nikalta hai."""
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    msg = str(exc)
+    if "400" in msg:
+        return "Bad Request (400): Invalid carrier code or shipment parameters"
+    if "401" in msg:
+        return "Unauthorized (401): Invalid API Key"
+    if "404" in msg:
+        return "Not Found (404): Shipment record not found"
+    if "429" in msg:
+        return "Rate Limit (429): API quota exceeded"
+    if "timed out" in msg.lower() or "timeout" in msg.lower():
+        return "Timeout: Safecube API took too long to respond"
+    return msg[:160]
+
+
 def sync_stale_shipments_job() -> dict:
     """Purani IN_TRANSIT shipments ko background mein Safecube API se fresh karta hai."""
     stale_list = get_stale_active_shipments()
@@ -52,10 +70,26 @@ def sync_stale_shipments_job() -> dict:
             fresh_data = fetch_and_parse_shipment(c_num, s_line)
             save_shipment_to_db(fresh_data)
             synced_count += 1
-            add_log("AUTO_SYNC", c_num, "LIVE_API", "SUCCESS", f"Background auto-sync updated {c_num}")
+            add_log(
+                action_type="AUTO_SYNC",
+                query_target=c_num,
+                source="LIVE_API",
+                status="SYNCED",
+                severity="SUCCESS",
+                details=f"Background auto-sync updated {c_num}"
+            )
         except Exception as exc:
             failed_count += 1
-            add_log("AUTO_SYNC", c_num, "LIVE_API", "ERROR", f"Auto-sync failed: {str(exc)}")
+            clean_err = _extract_clean_error(exc)
+            sev = "WARNING" if "timeout" in clean_err.lower() else "ERROR"
+            add_log(
+                action_type="AUTO_SYNC",
+                query_target=c_num,
+                source="LIVE_API",
+                status="FAILED",
+                severity=sev,
+                details=f"Auto-sync failed: {clean_err}"
+            )
 
     return {
         "checked_stale": len(stale_list),
@@ -74,10 +108,15 @@ async def periodic_auto_sync_worker():
 @app.on_event("startup")
 async def startup_event():
     init_db()
-    add_log("SYSTEM_START", "SERVER", "INTERNAL", "ONLINE", "Application started & database initialized")
-    # Startup par stale active shipments ko non-blocking background mein refresh karein
+    add_log(
+        action_type="SYSTEM_START",
+        query_target="SERVER",
+        source="INTERNAL",
+        status="ONLINE",
+        severity="INFO",
+        details="Application started & modular DB initialized"
+    )
     asyncio.create_task(asyncio.to_thread(sync_stale_shipments_job))
-    # Periodic background loop start karein
     asyncio.create_task(periodic_auto_sync_worker())
 
 
@@ -91,7 +130,7 @@ def serve_frontend():
 
 @app.get("/api/v1/health")
 def health_check():
-    return {"status": "online", "version": "2.1.0"}
+    return {"status": "online", "version": "2.2.0"}
 
 
 @app.get("/api/v1/track")
@@ -106,7 +145,14 @@ def track_container(
     if not force_refresh:
         cached = get_cached_shipment(clean_num)
         if cached:
-            add_log("CONTAINER_SEARCH", clean_num, "CACHE", "HIT", "Returned cached shipment (0 API credits used)")
+            add_log(
+                action_type="CONTAINER_SEARCH",
+                query_target=clean_num,
+                source="CACHE",
+                status="CACHE_HIT",
+                severity="SUCCESS",
+                details="Returned cached shipment (0 API credits used)"
+            )
             return cached
 
     # 2. Fetch live from Safecube API & save to DB
@@ -114,10 +160,25 @@ def track_container(
         result = fetch_and_parse_shipment(clean_num, sealine)
         save_shipment_to_db(result)
         mode = "FORCE_REFRESH" if force_refresh else "LIVE_FETCH"
-        add_log("CONTAINER_SEARCH", clean_num, "LIVE_API", mode, f"Fetched live data ({result.get('detected_type')})")
+        add_log(
+            action_type="CONTAINER_SEARCH",
+            query_target=clean_num,
+            source="LIVE_API",
+            status=mode,
+            severity="SUCCESS",
+            details=f"Fetched live data ({result.get('detected_type')})"
+        )
         return result
     except HTTPException as exc:
-        add_log("CONTAINER_SEARCH", clean_num, "LIVE_API", f"ERROR_{exc.status_code}", str(exc.detail))
+        sev = "WARNING" if exc.status_code in (404, 504) else "ERROR"
+        add_log(
+            action_type="CONTAINER_SEARCH",
+            query_target=clean_num,
+            source="LIVE_API",
+            status=f"HTTP_{exc.status_code}",
+            severity=sev,
+            details=_extract_clean_error(exc)
+        )
         raise
 
 
@@ -129,7 +190,14 @@ def track_vessel(
     matches = search_by_vessel_name(clean_name)
 
     if not matches:
-        add_log("VESSEL_SEARCH", clean_name.upper(), "DATABASE", "NOT_FOUND", "No tracked containers on this vessel")
+        add_log(
+            action_type="VESSEL_SEARCH",
+            query_target=clean_name.upper(),
+            source="DATABASE",
+            status="NOT_FOUND",
+            severity="WARNING",
+            details=f"No tracked containers found for vessel '{clean_name.upper()}'"
+        )
         raise HTTPException(
             status_code=404,
             detail=f"No tracked containers found on vessel '{clean_name}'. Pehle is vessel ka container track karein."
@@ -137,7 +205,24 @@ def track_vessel(
 
     latest_record = matches[0]
     vessel_summary = latest_record.get("summary", {})
-    add_log("VESSEL_SEARCH", vessel_summary.get("vessel_name") or clean_name.upper(), "DATABASE", "FOUND", f"Found {len(matches)} container(s) onboard")
+
+    # Sirf Vessel ke apne TRANSPORT / Voyage events (Cargo pickup/equipment events bilkul nahi)
+    raw_vessel_events = latest_record.get("vessel_milestones") or []
+    filtered_vessel_events = [
+        ev for ev in raw_vessel_events
+        if "PICKUP" not in (ev.get("description") or "").upper()
+        and "DELIVER" not in (ev.get("description") or "").upper()
+        and "AVAILABLE FOR PICKUP" not in (ev.get("description") or "").upper()
+    ]
+
+    add_log(
+        action_type="VESSEL_SEARCH",
+        query_target=vessel_summary.get("vessel_name") or clean_name.upper(),
+        source="DATABASE",
+        status="FOUND",
+        severity="SUCCESS",
+        details=f"Found {len(matches)} container(s) onboard"
+    )
 
     return {
         "vessel_name": vessel_summary.get("vessel_name"),
@@ -150,21 +235,23 @@ def track_vessel(
         "ais_departure_port": vessel_summary.get("ais_departure_port"),
         "ais_arrival_port": vessel_summary.get("ais_arrival_port"),
         "sea_route_path": latest_record.get("sea_route_path", []),
-        # Sirf Vessel ke apne TRANSPORT events (Container EQUIPMENT events se alag)
-        "vessel_milestones": latest_record.get("vessel_milestones") or latest_record.get("milestones", []),
+        "vessel_milestones": filtered_vessel_events,
         "total_containers_tracked": len(matches),
         "containers": [m["summary"] for m in matches]
     }
 
 
 @app.get("/api/v1/history")
-def get_history(limit: int = Query(15, ge=1, le=50)):
+def get_history(limit: int = Query(20, ge=1, le=100)):
     return {"history": get_tracking_history(limit)}
 
 
 @app.get("/api/v1/logs")
-def get_logs(limit: int = Query(30, ge=1, le=100)):
-    return {"logs": get_recent_logs(limit)}
+def get_logs(
+    limit: int = Query(50, ge=1, le=200),
+    severity: Optional[str] = Query(None, description="Filter by SUCCESS, WARNING, ERROR, or INFO")
+):
+    return {"logs": get_recent_logs(limit=limit, severity=severity)}
 
 
 @app.post("/api/v1/sync-active")

@@ -3,34 +3,7 @@ from typing import Optional
 import requests
 from fastapi import HTTPException
 from app.config import SINAY_API_KEY, BASE_URL, ENDPOINT
-
-# Convert user-friendly CARRIER NAME to SCAC CODE
-CARRIER_NAME_TO_SCAC = {
-    "COSCO": "COSU",
-    "MAERSK": "MAEU",
-    "MSC": "MSCU",
-    "CMA": "CMDU",
-    "CMA CGM": "CMDU",
-    "HAPAG": "HLCU",
-    "HAPAG-LLOYD": "HLCU",
-    "ONE": "ONEY",
-    "OCEAN NETWORK EXPRESS": "ONEY",
-    "EVERGREEN": "EGLV",
-    "HMM": "HDMU",
-    "YANG MING": "YMLU",
-    "ZIM": "ZIMU",
-    "OOCL": "OOLU",
-    "WAN HAI": "WHLC",
-    "PIL": "PCIU",
-    "KMTC": "KMTC",
-}
-
-
-def resolve_sealine(sealine_input: Optional[str]) -> Optional[str]:
-    if not sealine_input or not sealine_input.strip():
-        return None
-    cleaned = sealine_input.strip().upper()
-    return CARRIER_NAME_TO_SCAC.get(cleaned, cleaned)
+from app.carriers import resolve_sealine
 
 
 def detect_shipment_type(number: str) -> str:
@@ -66,6 +39,11 @@ def fetch_and_parse_shipment(shipment_number: str, sealine: Optional[str] = None
     try:
         response = requests.get(f"{BASE_URL}{ENDPOINT}", headers=headers, params=params, timeout=25)
 
+        if response.status_code == 400:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid request parameters for '{clean_num}' (sealine={resolved_sealine or 'auto'})."
+            )
         if response.status_code == 401:
             raise HTTPException(status_code=401, detail="Invalid Safecube/Sinay API Key.")
         if response.status_code == 404:
@@ -126,6 +104,15 @@ def fetch_and_parse_shipment(shipment_number: str, sealine: Optional[str] = None
                 container_milestones.append(parsed_ev)
             elif ev_type == "TRANSPORT":
                 vessel_milestones.append(parsed_ev)
+
+        # Agar API ne explicitly eventType tag nahi diya to description se fallback classification
+        if not container_milestones and not vessel_milestones and all_milestones:
+            for item in all_milestones:
+                desc_upper = (item.get("description") or "").upper()
+                if any(k in desc_upper for k in ["VESSEL", "DEPARTURE", "ARRIVAL", "SAIL", "VOYAGE"]):
+                    vessel_milestones.append(item)
+                else:
+                    container_milestones.append(item)
 
         return {
             "source": "LIVE_API",
