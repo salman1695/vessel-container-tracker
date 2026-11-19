@@ -1,0 +1,315 @@
+<!-- File 4: frontend/index.html (Clean Structural Layout Only) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MarineTrack Pro — Enterprise Container & Vessel Tracking</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+
+  <!-- Top Navigation Bar -->
+  <nav class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-600 to-blue-700 text-white flex items-center justify-center shadow-md shadow-sky-600/20 text-lg">
+          🚢
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-lg font-extrabold tracking-tight text-slate-900">MarineTrack</span>
+            <span class="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-sky-100 text-sky-700">Enterprise</span>
+          </div>
+          <p class="text-xs text-slate-500">Real-Time Container & Satellite AIS Vessel Intelligence</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2.5">
+        <span id="dataSourceBadge" class="hidden text-xs px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold"></span>
+
+        <button id="syncFleetBtn" type="button" onclick="triggerFleetSync()"
+          class="text-xs font-semibold text-sky-700 hover:bg-sky-50 border border-sky-200 px-3 py-2 rounded-lg transition cursor-pointer">
+          🔄 Sync Active Fleet
+        </button>
+
+        <button type="button" onclick="toggleLogsDrawer()"
+          class="text-xs font-semibold text-slate-700 hover:bg-slate-100 border border-slate-200 px-3 py-2 rounded-lg transition cursor-pointer">
+          📜 Audit Logs
+        </button>
+
+        <a href="/docs" target="_blank" class="text-xs font-semibold text-slate-600 hover:text-sky-600 bg-slate-100 hover:bg-sky-50 px-3 py-2 rounded-lg transition">
+          API Docs ↗
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Search Section -->
+  <div class="bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white pt-8 pb-16 px-4 sm:px-6">
+    <div class="max-w-7xl mx-auto">
+      <div class="max-w-2xl mb-6">
+        <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight">Track Global Shipments & Live Vessels</h2>
+        <p class="text-slate-300 text-sm mt-1">Search by Container Number, Bill of Lading (BL), or inspect active vessels by name.</p>
+      </div>
+
+      <!-- Search Card -->
+      <div class="bg-white text-slate-900 rounded-2xl p-5 sm:p-6 shadow-2xl border border-slate-200/80">
+        <!-- Mode Tabs -->
+        <div class="flex items-center justify-between flex-wrap gap-3 border-b border-slate-100 pb-4 mb-5">
+          <div class="flex gap-2 bg-slate-100 p-1 rounded-xl">
+            <button id="tabContainer" onclick="switchTab('container')" class="px-4 py-2 rounded-lg text-sm font-bold bg-white text-sky-700 shadow-xs transition cursor-pointer">
+              📦 Container / BL Tracking
+            </button>
+            <button id="tabVessel" onclick="switchTab('vessel')" class="px-4 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:text-slate-900 transition cursor-pointer">
+              🚢 Vessel Voyage Search
+            </button>
+          </div>
+
+          <div class="text-xs text-slate-500 flex items-center gap-2">
+            <span>Demo:</span>
+            <button type="button" onclick="quickFill('TCNU2686298')" class="font-mono font-semibold text-sky-600 hover:underline bg-sky-50 px-2.5 py-1 rounded-md cursor-pointer">
+              TCNU2686298
+            </button>
+          </div>
+        </div>
+
+        <!-- Container / BL Form -->
+        <form id="containerForm" onsubmit="handleContainerSearch(event)" class="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+          <div class="md:col-span-5">
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Container or BL Number</label>
+            <input id="shipmentInput" type="text" required placeholder="e.g. TCNU2686298"
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-slate-900 font-mono font-semibold placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white uppercase" />
+          </div>
+
+          <div class="md:col-span-4">
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Shipping Line (Optional)</label>
+            <select id="sealineSelect" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white">
+              <option value="">✨ Auto-Detect Carrier</option>
+              <option value="COSCO">COSCO Shipping (COSU)</option>
+              <option value="MAERSK">Maersk Line (MAEU)</option>
+              <option value="MSC">MSC (MSCU)</option>
+              <option value="CMA CGM">CMA CGM (CMDU)</option>
+              <option value="HAPAG-LLOYD">Hapag-Lloyd (HLCU)</option>
+              <option value="ONE">ONE - Ocean Network Express (ONEY)</option>
+              <option value="EVERGREEN">Evergreen Line (EGLV)</option>
+              <option value="HMM">HMM (HDMU)</option>
+              <option value="YANG MING">Yang Ming (YMLU)</option>
+              <option value="ZIM">ZIM (ZIMU)</option>
+              <option value="OOCL">OOCL (OOLU)</option>
+              <option value="KMTC">KMTC (KMTC)</option>
+            </select>
+          </div>
+
+          <div class="md:col-span-3 flex gap-2">
+            <button type="submit" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-3 px-5 rounded-xl transition shadow-md shadow-sky-600/20 cursor-pointer">
+              Track Shipment
+            </button>
+            <button type="button" onclick="handleContainerSearch(event, true)" title="Force Live API Refresh (Bypass Cache)"
+              class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-3 rounded-xl border border-slate-300 transition cursor-pointer font-bold">
+              ↻
+            </button>
+          </div>
+        </form>
+
+        <!-- Vessel Form -->
+        <form id="vesselForm" onsubmit="handleVesselSearch(event)" class="hidden grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+          <div class="md:col-span-9">
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Vessel Name (Active Tracked Fleet)</label>
+            <input id="vesselInput" type="text" required placeholder="e.g. KMTC MUNDRA"
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-slate-900 font-semibold placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:bg-white uppercase" />
+          </div>
+          <div class="md:col-span-3">
+            <button type="submit" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-3 px-5 rounded-xl transition shadow-md shadow-sky-600/20 cursor-pointer">
+              Search Vessel
+            </button>
+          </div>
+        </form>
+
+        <!-- Recently Tracked History Strip -->
+        <div class="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
+          <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mr-1">Recent History:</span>
+          <div id="recentHistoryBar" class="flex flex-wrap gap-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content Area -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 -mt-8 pb-16 space-y-6">
+
+    <!-- Loader -->
+    <div id="loader" class="hidden bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+      <div class="inline-block w-10 h-10 border-4 border-sky-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+      <p class="text-slate-600 font-medium text-sm">Retrieving satellite AIS coordinates & carrier milestones...</p>
+    </div>
+
+    <!-- Error Alert -->
+    <div id="errorBox" class="hidden bg-rose-50 border border-rose-200 text-rose-700 px-5 py-4 rounded-xl text-sm font-medium shadow-xs"></div>
+
+    <!-- Vessel Search Results (Separate Vessel Voyage Timeline + Containers Onboard) -->
+    <div id="vesselResultsSection" class="hidden space-y-6">
+      <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-slate-100">
+          <div>
+            <span class="text-xs font-bold uppercase tracking-wider text-sky-600">Vessel Voyage Profile</span>
+            <h3 id="vResName" class="text-2xl font-extrabold text-slate-900 mt-0.5">-</h3>
+            <p id="vResMeta" class="text-xs text-slate-500 mt-1">-</p>
+          </div>
+          <div class="flex gap-3">
+            <div class="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
+              <span class="text-slate-400 text-[11px] font-bold uppercase block">IMO</span>
+              <span id="vResImo" class="font-mono font-bold text-slate-800">-</span>
+            </div>
+            <div class="bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
+              <span class="text-slate-400 text-[11px] font-bold uppercase block">MMSI</span>
+              <span id="vResMmsi" class="font-mono font-bold text-slate-800">-</span>
+            </div>
+            <div class="bg-sky-50 px-4 py-2 rounded-xl border border-sky-200">
+              <span class="text-sky-600 text-[11px] font-bold uppercase block">Tracked Cargo</span>
+              <span id="vResCount" class="font-mono font-bold text-sky-700">-</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-5">
+          <div class="lg:col-span-6">
+            <h4 class="text-sm font-extrabold text-slate-900 mb-4">🧭 Vessel Port-to-Port Voyage Schedule</h4>
+            <div id="vesselTimelineContainer" class="relative border-l-2 border-sky-200 ml-3 space-y-5"></div>
+          </div>
+
+          <div class="lg:col-span-6">
+            <h4 class="text-sm font-extrabold text-slate-900 mb-4">📦 Containers Loaded Onboard</h4>
+            <div id="vContainersList" class="space-y-3"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Container Tracking Dashboard Results -->
+    <div id="resultsSection" class="hidden space-y-6">
+
+      <!-- Route Visual Banner -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <div class="grid grid-cols-1 md:grid-cols-3 items-center gap-6">
+          <div>
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Port of Loading (POL)</span>
+            <div id="bannerOrigin" class="text-xl font-extrabold text-slate-900 mt-0.5">-</div>
+            <span id="bannerCarrier" class="inline-block mt-1 text-xs font-semibold px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700">-</span>
+          </div>
+
+          <div class="text-center">
+            <div class="flex items-center justify-center gap-2 text-xs font-bold text-sky-600 mb-2">
+              <span id="resStatusBadge" class="px-3 py-1 rounded-full bg-sky-100 text-sky-700 uppercase tracking-wide">-</span>
+            </div>
+            <div class="relative flex items-center justify-between">
+              <span class="w-3.5 h-3.5 rounded-full bg-emerald-500 ring-4 ring-emerald-100"></span>
+              <div class="flex-1 h-1.5 bg-slate-200 mx-2 relative rounded-full overflow-hidden">
+                <div id="routeProgressFill" class="w-3/5 h-full bg-sky-500 rounded-full transition-all duration-500"></div>
+              </div>
+              <span class="text-lg">🚢</span>
+              <div class="flex-1 h-1.5 bg-slate-200 mx-2 rounded-full"></div>
+              <span class="w-3.5 h-3.5 rounded-full bg-rose-500 ring-4 ring-rose-100"></span>
+            </div>
+            <div id="bannerVessel" class="text-xs font-bold text-slate-600 mt-2">-</div>
+          </div>
+
+          <div class="md:text-right">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Port of Discharge (POD)</span>
+            <div id="bannerDest" class="text-xl font-extrabold text-slate-900 mt-0.5">-</div>
+            <div id="bannerEta" class="text-xs font-bold text-amber-600 mt-1">-</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4 KPI Detail Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Container Number</span>
+          <div id="resContainer" class="text-lg font-extrabold font-mono text-slate-900 mt-1">-</div>
+          <div id="resSize" class="text-xs text-slate-500 mt-1">-</div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Vessel Details</span>
+          <div id="resVessel" class="text-lg font-extrabold text-slate-900 mt-1">-</div>
+          <div id="resImo" class="text-xs font-mono text-slate-500 mt-1">-</div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Live AIS Coordinates</span>
+          <div id="resCoords" class="text-lg font-extrabold font-mono text-sky-700 mt-1">-</div>
+          <div id="resCoordTime" class="text-xs text-slate-500 mt-1">-</div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Estimated Arrival</span>
+          <div id="resEta" class="text-lg font-extrabold text-slate-900 mt-1">-</div>
+          <div id="resType" class="text-xs text-emerald-600 font-semibold mt-1">-</div>
+        </div>
+      </div>
+
+      <!-- Map & Container Equipment Timeline Section -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Live Map -->
+        <div class="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h3 class="font-extrabold text-slate-900">🗺️ Live Vessel Position & Sea Route</h3>
+            <div class="flex items-center gap-3">
+              <button id="mapLayerToggleBtn" type="button" onclick="toggleMapLayer()"
+                class="text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg border border-slate-200 transition cursor-pointer">
+                🛰️ Satellite View
+              </button>
+            </div>
+          </div>
+          <div id="map"></div>
+        </div>
+
+        <!-- Container-Specific Milestones -->
+        <div class="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm max-h-[545px] overflow-y-auto">
+          <h3 class="font-extrabold text-slate-900 mb-1">📦 Container Equipment Milestones</h3>
+          <p class="text-xs text-slate-400 mb-4">Terminal handling, loading & pickup events</p>
+          <div id="timelineContainer" class="relative border-l-2 border-slate-200 ml-3 space-y-5"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- System Audit & Activity Logs Drawer -->
+    <div id="logsDrawer" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="font-extrabold text-slate-900">📜 System Activity & API Audit Logs</h3>
+          <p class="text-xs text-slate-500">Tracks live API calls, cache hits, vessel queries, and background auto-syncs</p>
+        </div>
+        <button type="button" onclick="loadHistoryAndLogs()" class="text-xs font-semibold text-sky-600 hover:underline cursor-pointer">
+          Refresh Logs ↻
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              <th class="py-2 px-3">Timestamp</th>
+              <th class="py-2 px-3">Action</th>
+              <th class="py-2 px-3">Target</th>
+              <th class="py-2 px-3">Source</th>
+              <th class="py-2 px-3">Details</th>
+            </tr>
+          </thead>
+          <tbody id="auditLogsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="/static/map.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments & Environment variables (API Keys)
+.venv/
+venv/
+.env
+.env.*
+
+# SQLite Database & Cache Logs
+*.db
+*.sqlite
+*.sqlite3
+tracking_cache.db
+
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
